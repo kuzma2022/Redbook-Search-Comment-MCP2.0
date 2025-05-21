@@ -110,12 +110,13 @@ async def login() -> str:
         return "已登录小红书账号"
 
 @mcp.tool()
-async def search_notes(keywords: str, limit: int = 5) -> str:
+async def search_notes(keywords: str, limit: int = 5, sort_by_time: bool = False) -> str:
     """根据关键词搜索笔记
     
     Args:
         keywords: 搜索关键词
         limit: 返回结果数量限制
+        sort_by_time: 是否按最新时间排序
     """
     login_status = await ensure_browser()
     if not login_status:
@@ -127,22 +128,43 @@ async def search_notes(keywords: str, limit: int = 5) -> str:
         await main_page.goto(search_url, timeout=60000)
         await asyncio.sleep(5)  # 等待页面加载
         
+        # 如果需要按时间排序
+        if sort_by_time:
+            try:
+                # 点击排序下拉菜单
+                sort_dropdown = await main_page.query_selector('text="综合"')
+                if sort_dropdown:
+                    await sort_dropdown.click()
+                    await asyncio.sleep(1)
+                    
+                    # 点击"最新"选项
+                    newest_option = await main_page.query_selector('text="最新"')
+                    if newest_option:
+                        await newest_option.click()
+                        await asyncio.sleep(3)  # 等待排序结果加载
+                    else:
+                        print("未找到'最新'排序选项")
+                else:
+                    print("未找到排序下拉菜单")
+            except Exception as e:
+                print(f"设置排序顺序时出错: {str(e)}")
+        
         # 等待页面完全加载
         await asyncio.sleep(5)
         
         # 打印页面HTML用于调试
         page_html = await main_page.content()
-        print(f"页面HTML片段: {page_html[10000:10500]}...")
+        #print(f"页面HTML片段: {page_html[10000:10500]}...")
         
         # 使用更精确的选择器获取帖子卡片
-        print("尝试获取帖子卡片...")
+        #print("尝试获取帖子卡片...")
         post_cards = await main_page.query_selector_all('section.note-item')
-        print(f"找到 {len(post_cards)} 个帖子卡片")
+        #print(f"找到 {len(post_cards)} 个帖子卡片")
         
         if not post_cards:
             # 尝试备用选择器
             post_cards = await main_page.query_selector_all('div[data-v-a264b01a]')
-            print(f"使用备用选择器找到 {len(post_cards)} 个帖子卡片")
+            #print(f"使用备用选择器找到 {len(post_cards)} 个帖子卡片")
         
         post_links = []
         post_titles = []
@@ -163,19 +185,19 @@ async def search_notes(keywords: str, limit: int = 5) -> str:
                     try:
                         # 打印卡片HTML用于调试
                         card_html = await card.inner_html()
-                        print(f"卡片HTML片段: {card_html[:200]}...")
+                        #print(f"卡片HTML片段: {card_html[:200]}...")
                         
                         # 首先尝试获取卡片内的footer中的标题
                         title_element = await card.query_selector('div.footer a.title span')
                         if title_element:
                             title = await title_element.text_content()
-                            print(f"找到标题(方法1): {title}")
+                            #print(f"找到标题(方法1): {title}")
                         else:
                             # 尝试直接获取标题元素
                             title_element = await card.query_selector('a.title span')
                             if title_element:
                                 title = await title_element.text_content()
-                                print(f"找到标题(方法2): {title}")
+                                #print(f"找到标题(方法2): {title}")
                             else:
                                 # 尝试获取任何可能的文本内容
                                 text_elements = await card.query_selector_all('span')
@@ -188,17 +210,17 @@ async def search_notes(keywords: str, limit: int = 5) -> str:
                                 if potential_titles:
                                     # 选择最长的文本作为标题
                                     title = max(potential_titles, key=len)
-                                    print(f"找到可能的标题(方法3): {title}")
+                                    #print(f"找到可能的标题(方法3): {title}")
                                 else:
                                     # 尝试直接获取卡片中的所有文本
                                     all_text = await card.evaluate('el => Array.from(el.querySelectorAll("*")).map(node => node.textContent).filter(text => text && text.trim().length > 5)')
                                     if all_text and len(all_text) > 0:
                                         # 选择最长的文本作为标题
                                         title = max(all_text, key=len)
-                                        print(f"找到可能的标题(方法4): {title}")
+                                        #print(f"找到可能的标题(方法4): {title}")
                                     else:
                                         title = "未知标题"
-                                        print("无法找到标题，使用默认值'未知标题'")
+                                        #print("无法找到标题，使用默认值'未知标题'")
                         
                         # 如果获取到的标题为空，设为未知标题
                         if not title or title.strip() == "":
@@ -226,8 +248,12 @@ async def search_notes(keywords: str, limit: int = 5) -> str:
         # 格式化返回结果
         if unique_posts:
             result = "搜索结果：\n\n"
+            if sort_by_time:
+                result = "按最新时间排序的搜索结果：\n\n"
             for i, post in enumerate(unique_posts, 1):
-                result += f"{i}. {post['title']}\n   链接: {post['url']}\n\n"
+                # 将search_result替换为explore
+                display_url = post['url'].replace('/search_result/', '/explore/')
+                result += f"{i}. {post['title']}\n   链接: {display_url}\n\n"
             
             return result
         else:
@@ -235,6 +261,48 @@ async def search_notes(keywords: str, limit: int = 5) -> str:
     
     except Exception as e:
         return f"搜索笔记时出错: {str(e)}"
+
+# 在确保浏览器函数之后，添加一个新的辅助函数
+async def is_same_page(target_url: str) -> bool:
+    """检查当前页面是否已经在目标URL上
+    
+    Args:
+        target_url: 目标URL
+        
+    Returns:
+        bool: 如果当前页面与目标URL匹配返回True，否则返回False
+    """
+    global main_page
+    
+    if not main_page:
+        return False
+    
+    try:
+        # 获取当前URL
+        current_url = main_page.url
+        
+        # 移除URL中的查询参数和令牌进行比较
+        def clean_url(url):
+            # 首先提取基本URL（不包含查询参数）
+            base_url = url.split('?')[0]
+            # 如果是小红书搜索结果或笔记页面，保留关键ID
+            if '/search_result/' in url or '/explore/' in url or '/discovery/' in url:
+                # 提取ID
+                import re
+                id_match = re.search(r'/(search_result|explore|discovery)/([a-zA-Z0-9]+)', url)
+                if id_match:
+                    return f"{base_url}_{id_match.group(2)}"
+            return base_url
+        
+        # 清理URL
+        clean_current = clean_url(current_url)
+        clean_target = clean_url(target_url)
+        
+        # 如果清理后的URL相同，则认为是同一页面
+        return clean_current == clean_target
+    except Exception as e:
+        print(f"检查URL时出错: {str(e)}")
+        return False
 
 @mcp.tool()
 async def get_note_content(url: str) -> str:
@@ -248,9 +316,21 @@ async def get_note_content(url: str) -> str:
         return "请先登录小红书账号"
     
     try:
-        # 访问帖子链接
-        await main_page.goto(url, timeout=60000)
-        await asyncio.sleep(10)  # 增加等待时间到10秒
+        # 检查是否已经在目标页面
+        if not await is_same_page(url):
+            # 如果不在目标页面，则访问帖子链接
+            # 添加xsec_source=pc_feed参数
+            modified_url = url
+            if '?' in url:
+                modified_url = url
+            else:
+                modified_url = url
+            await main_page.goto(modified_url, timeout=60000)
+            await asyncio.sleep(5)  # 等待页面加载
+        else:
+            # 可能需要刷新页面以确保内容最新
+            #await main_page.reload()
+            await asyncio.sleep(3)
         
         # 增强滚动操作以确保所有内容加载
         await main_page.evaluate('''
@@ -271,7 +351,7 @@ async def get_note_content(url: str) -> str:
         
         # 打印页面结构片段用于分析
         try:
-            print("打印页面结构片段用于分析")
+            #print("打印页面结构片段用于分析")
             page_structure = await main_page.evaluate('''
                 () => {
                     // 获取笔记内容区域
@@ -290,7 +370,7 @@ async def get_note_content(url: str) -> str:
                     };
                 }
             ''')
-            print(f"页面结构分析: {json.dumps(page_structure, ensure_ascii=False, indent=2)}")
+            #print(f"页面结构分析: {json.dumps(page_structure, ensure_ascii=False, indent=2)}")
         except Exception as e:
             print(f"打印页面结构时出错: {str(e)}")
         
@@ -299,14 +379,14 @@ async def get_note_content(url: str) -> str:
         
         # 获取帖子标题 - 方法1：使用id选择器
         try:
-            print("尝试获取标题 - 方法1：使用id选择器")
+            #print("尝试获取标题 - 方法1：使用id选择器")
             title_element = await main_page.query_selector('#detail-title')
             if title_element:
                 title = await title_element.text_content()
                 post_content["标题"] = title.strip() if title else "未知标题"
-                print(f"方法1获取到标题: {post_content['标题']}")
+                #print(f"方法1获取到标题: {post_content['标题']}")
             else:
-                print("方法1未找到标题元素")
+                #print("方法1未找到标题元素")
                 post_content["标题"] = "未知标题"
         except Exception as e:
             print(f"方法1获取标题出错: {str(e)}")
@@ -359,17 +439,17 @@ async def get_note_content(url: str) -> str:
         
         # 获取作者 - 方法1：使用username类选择器
         try:
-            print("尝试获取作者 - 方法1：使用username类选择器")
+            #print("尝试获取作者 - 方法1：使用username类选择器")
             author_element = await main_page.query_selector('span.username')
             if author_element:
                 author = await author_element.text_content()
                 post_content["作者"] = author.strip() if author else "未知作者"
-                print(f"方法1获取到作者: {post_content['作者']}")
+                #print(f"方法1获取到作者: {post_content['作者']}")
             else:
-                print("方法1未找到作者元素")
+                #print("方法1未找到作者元素")
                 post_content["作者"] = "未知作者"
         except Exception as e:
-            print(f"方法1获取作者出错: {str(e)}")
+            #print(f"方法1获取作者出错: {str(e)}")
             post_content["作者"] = "未知作者"
         
         # 获取作者 - 方法2：使用链接选择器
@@ -419,23 +499,23 @@ async def get_note_content(url: str) -> str:
         
         # 获取发布时间 - 方法1：使用date类选择器
         try:
-            print("尝试获取发布时间 - 方法1：使用date类选择器")
+            #print("尝试获取发布时间 - 方法1：使用date类选择器")
             time_element = await main_page.query_selector('span.date')
             if time_element:
                 time_text = await time_element.text_content()
                 post_content["发布时间"] = time_text.strip() if time_text else "未知"
-                print(f"方法1获取到发布时间: {post_content['发布时间']}")
+                #print(f"方法1获取到发布时间: {post_content['发布时间']}")
             else:
                 print("方法1未找到发布时间元素")
                 post_content["发布时间"] = "未知"
         except Exception as e:
-            print(f"方法1获取发布时间出错: {str(e)}")
+            #print(f"方法1获取发布时间出错: {str(e)}")
             post_content["发布时间"] = "未知"
         
         # 获取发布时间 - 方法2：使用正则表达式匹配
         if post_content["发布时间"] == "未知":
             try:
-                print("尝试获取发布时间 - 方法2：使用正则表达式匹配")
+                #print("尝试获取发布时间 - 方法2：使用正则表达式匹配")
                 time_selectors = [
                     'text=/编辑于/',
                     'text=/\\d{2}-\\d{2}/',
@@ -512,7 +592,7 @@ async def get_note_content(url: str) -> str:
         
         # 获取帖子正文内容 - 方法1：使用精确的ID和class选择器
         try:
-            print("尝试获取正文内容 - 方法1：使用精确的ID和class选择器")
+            #print("尝试获取正文内容 - 方法1：使用精确的ID和class选择器")
             
             # 先明确标记评论区域
             await main_page.evaluate('''
@@ -546,9 +626,9 @@ async def get_note_content(url: str) -> str:
                     content_text = await content_element.text_content()
                     if content_text and len(content_text.strip()) > 50:  # 增加长度阈值
                         post_content["内容"] = content_text.strip()
-                        print(f"方法1获取到正文内容，长度: {len(post_content['内容'])}")
+                        #print(f"方法1获取到正文内容，长度: {len(post_content['内容'])}")
                     else:
-                        print(f"方法1获取到的内容太短: {len(content_text.strip() if content_text else 0)}")
+                        #print(f"方法1获取到的内容太短: {len(content_text.strip() if content_text else 0)}")
                         post_content["内容"] = "未能获取内容"
                 else:
                     print("方法1找到的元素在评论区域内，跳过")
@@ -563,7 +643,7 @@ async def get_note_content(url: str) -> str:
         # 获取帖子正文内容 - 方法2：使用XPath选择器
         if post_content["内容"] == "未能获取内容":
             try:
-                print("尝试获取正文内容 - 方法2：使用XPath选择器")
+                #print("尝试获取正文内容 - 方法2：使用XPath选择器")
                 # 使用XPath获取笔记内容区域
                 content_text = await main_page.evaluate('''
                     () => {
@@ -585,7 +665,7 @@ async def get_note_content(url: str) -> str:
         # 获取帖子正文内容 - 方法3：使用JavaScript获取最长文本
         if post_content["内容"] == "未能获取内容":
             try:
-                print("尝试获取正文内容 - 方法3：使用JavaScript获取最长文本")
+                #print("尝试获取正文内容 - 方法3：使用JavaScript获取最长文本")
                 content_text = await main_page.evaluate('''
                     () => {
                         // 定义评论区域选择器
@@ -642,7 +722,7 @@ async def get_note_content(url: str) -> str:
         # 获取帖子正文内容 - 方法4：区分正文和评论内容
         if post_content["内容"] == "未能获取内容":
             try:
-                print("尝试获取正文内容 - 方法4：区分正文和评论内容")
+                #print("尝试获取正文内容 - 方法4：区分正文和评论内容")
                 content_text = await main_page.evaluate('''
                     () => {
                         // 首先尝试获取note-content区域
@@ -687,7 +767,7 @@ async def get_note_content(url: str) -> str:
         # 获取帖子正文内容 - 方法5：直接通过DOM结构定位
         if post_content["内容"] == "未能获取内容":
             try:
-                print("尝试获取正文内容 - 方法5：直接通过DOM结构定位")
+                #print("尝试获取正文内容 - 方法5：直接通过DOM结构定位")
                 content_text = await main_page.evaluate('''
                     () => {
                         // 根据您提供的HTML结构直接定位
@@ -721,7 +801,7 @@ async def get_note_content(url: str) -> str:
                 
                 if content_text and len(content_text) > 100:
                     post_content["内容"] = content_text
-                    print(f"方法5获取到正文内容，长度: {len(post_content['内容'])}")
+                    #print(f"方法5获取到正文内容，长度: {len(post_content['内容'])}")
                 else:
                     print(f"方法5获取到的内容太短或为空: {len(content_text) if content_text else 0}")
             except Exception as e:
@@ -751,9 +831,21 @@ async def get_note_comments(url: str) -> str:
         return "请先登录小红书账号"
     
     try:
-        # 访问帖子链接
-        await main_page.goto(url, timeout=60000)
-        await asyncio.sleep(5)  # 等待页面加载
+        # 检查是否已经在目标页面
+        if not await is_same_page(url):
+            # 如果不在目标页面，则访问帖子链接
+            # 添加xsec_source=pc_feed参数
+            modified_url = url
+            if '?' in url:
+                modified_url += '&xsec_source=pc_feed'
+            else:
+                modified_url += '?xsec_source=pc_feed'
+            await main_page.goto(modified_url, timeout=60000)
+            await asyncio.sleep(5)  # 等待页面加载
+        else:
+            # 可能需要刷新页面以确保内容最新
+            #await main_page.reload()
+            await asyncio.sleep(3)
         
         # 先滚动到评论区
         comment_section_locators = [
@@ -1044,10 +1136,10 @@ async def post_smart_comment(url: str, comment_type: str = "引流") -> dict:
     
     # 评论类型指导
     comment_guides = {
-        "引流": "生成一条表达认同并引导互动的评论。可以提到自己也在研究相关内容，或表达希望进一步交流的意愿。可以在结尾加上“有更多问题欢迎私信我”或“想了解更多可以找我聊聊”等邀请语句。",
-        "点赞": "生成一条简短的赞美评论，表达对内容的喜爱和支持。可以提到作者名字和笔记的领域，如“太赞了！XX的分享总是这么实用”或“喜欢这种深度分享”等。",
-        "咨询": "生成一条提问式评论，针对笔记内容询问更多细节或相关信息。可以使用“请问博主”或“想请教一下”等开头，并提出与笔记内容相关的具体问题。",
-        "专业": "生成一条展示专业知识的评论，针对笔记内容提供专业见解或补充信息。可以使用“作为该领域从业者”或“从专业角度来看”等开头，并在评论中使用与笔记领域相关的专业术语。"
+        "引流": "评论时，真诚地表达你对笔记内容的认同或共鸣。可以自然地提及你也有相似的经历或正在探索相关领域，并流露出希望与博主或其他读者进一步交流的想法。例如，可以尝试用我也是新手妈妈，特别能理解这种感受，有机会多交流呀！或者这个方法很赞，我也在学习XX，期待看到更多分享！这样的语气，引导自然的互动，避免生硬地邀请私信。",
+        "点赞": "用轻松自然的语气表达你对笔记内容的欣赏和支持。可以提一两句具体喜欢笔记的哪个点，或者它如何帮到了你。例如，这篇太及时雨了，[作者昵称]总能分享到点子上！或看完感觉很有启发，特别是[某一点]，马上去试试！避免使用过于泛泛的赞美。",
+        "咨询": "像和朋友聊天一样，对笔记中感兴趣的点提出具体问题。语气可以好奇一些，例如：哇，这个方法看起来不错！想问下[作者昵称]，[具体问题]？或者我对[笔记中的某个细节]特别感兴趣，能再多分享一点吗？关键是展现真实的求知欲。",
+        "专业": "在尊重博主分享的基础上，以友善和建设性的方式分享你的专业见解或补充信息。可以自然地引出你的专业背景，例如：这个观点很有意思，我之前在[相关领域]工作中也遇到过类似情况，发现[补充见解/经验]也挺有效的。或者 感谢[作者昵称]的分享，从[你的专业]角度看，[补充信息或不同视角]或许也能提供一些参考。重点是提供有价值的补充，而不是单纯强调自己的专业身份。"
     }
     
     # 返回笔记分析结果和评论类型，让MCP客户端(如Claude)生成评论
@@ -1077,9 +1169,21 @@ async def post_comment(url: str, comment: str) -> str:
         return "请先登录小红书账号，才能发布评论"
     
     try:
-        # 访问帖子链接
-        await main_page.goto(url, timeout=60000)
-        await asyncio.sleep(5)  # 等待页面加载
+        # 检查是否已经在目标页面
+        if not await is_same_page(url):
+            # 如果不在目标页面，则访问帖子链接
+            # 添加xsec_source=pc_feed参数
+            modified_url = url
+            if '?' in url:
+                modified_url += '&xsec_source=pc_feed'
+            else:
+                modified_url += '?xsec_source=pc_feed'
+            await main_page.goto(modified_url, timeout=60000)
+            await asyncio.sleep(5)  # 等待页面加载
+        else:
+            # 可能需要刷新页面以确保内容最新
+            #await main_page.reload()
+            await asyncio.sleep(3)
         
         # 定位评论区域并滚动到该区域
         comment_area_found = False
@@ -1113,6 +1217,7 @@ async def post_comment(url: str, comment: str) -> str:
             'div[contenteditable="true"]',
             'paragraph:has-text("说点什么...")',
             'text="说点什么..."',
+            'text="评论"',
             'text="评论发布后所有人都能看到"'
         ]
         
@@ -1137,7 +1242,7 @@ async def post_comment(url: str, comment: str) -> str:
                     const editableElements = Array.from(document.querySelectorAll('[contenteditable="true"]'));
                     if (editableElements.length > 0) return true;
                     
-                    // 查找包含“说点什么”的元素
+                    // 查找包含"说点什么"的元素
                     const placeholderElements = Array.from(document.querySelectorAll('*'))
                         .filter(el => el.textContent && el.textContent.includes('说点什么'));
                     return placeholderElements.length > 0;
@@ -1220,8 +1325,366 @@ async def post_comment(url: str, comment: str) -> str:
 # 这里原来有_generate_smart_comment函数，现在已经被移除
 # 因为我们重构了post_smart_comment函数，将评论生成逻辑转移到MCP客户端
 
+@mcp.tool()
+async def like_note(url: str) -> str:
+    """给笔记点赞
+    
+    Args:
+        url: 笔记 URL
+    """
+    login_status = await ensure_browser()
+    if not login_status:
+        return "请先登录小红书账号，才能给笔记点赞"
+    
+    try:
+        # 检查是否已经在目标页面
+        if not await is_same_page(url):
+            # 如果不在目标页面，则访问帖子链接
+            # 添加xsec_source=pc_feed参数
+            modified_url = url
+            if '?' in url:
+                modified_url += '&xsec_source=pc_feed'
+            else:
+                modified_url += '?xsec_source=pc_feed'
+            await main_page.goto(modified_url, timeout=60000)
+            await asyncio.sleep(5)  # 等待页面加载
+        else:
+            # 可能需要刷新页面以确保内容最新
+            #await main_page.reload()
+            await asyncio.sleep(3)
+        
+        # 定位点赞按钮并点击
+        like_success = False
+        
+        # 方法1: 尝试查找常见的点赞按钮选择器
+        like_button_selectors = [
+            'div.like-icon',
+            'div.like',
+            'span.like',
+            'div[aria-label="点赞"]',
+            'svg:has(path[d="M16.1,11C16,10.7,15.9,10.3,15.9,10c0-0.3,0.1-0.7,0.2-1l2.4-5.9C18.6,2.7,18.3,2,17.6,2H10"])',  # 常见的点赞SVG图标
+            'svg.icon-like'
+        ]
+        
+        for selector in like_button_selectors:
+            try:
+                like_button = await main_page.query_selector(selector)
+                if like_button and await like_button.is_visible():
+                    # 检查是否已经点赞
+                    is_liked = await like_button.evaluate('(el) => el.classList.contains("liked") || el.getAttribute("aria-label") === "已点赞"')
+                    if is_liked:
+                        return "已经为该笔记点赞"
+                    
+                    # 点赞
+                    await like_button.click()
+                    await asyncio.sleep(2)
+                    like_success = True
+                    break
+            except Exception as e:
+                print(f"尝试点赞方法1失败: {str(e)}")
+        
+        # 方法2: 如果方法1失败，尝试使用文本内容查找
+        if not like_success:
+            try:
+                # 查找包含点赞文本或图标的元素
+                like_text_elements = await main_page.query_selector_all('text="点赞", text="赞", text="喜欢"')
+                for element in like_text_elements:
+                    if await element.is_visible():
+                        await element.click()
+                        await asyncio.sleep(2)
+                        like_success = True
+                        break
+            except Exception as e:
+                print(f"尝试点赞方法2失败: {str(e)}")
+        
+        # 方法3: 使用JavaScript尝试查找和点击点赞按钮
+        if not like_success:
+            try:
+                js_like_result = await main_page.evaluate('''
+                    () => {
+                        // 尝试查找点赞按钮的各种可能
+                        const likeSelectors = [
+                            'div.like', 
+                            'div.like-icon',
+                            'span.like',
+                            '.operations .like',
+                            '.like-comment-collect .like',
+                            'button[aria-label="点赞"]',
+                            // SVG图标相关
+                            'svg.icon-like',
+                            // 根据点赞按钮周围的上下文
+                            'div.operations > div:first-child',
+                            '.operations-container > div:first-child'
+                        ];
+                        
+                        // 遍历所有可能的选择器
+                        for (const selector of likeSelectors) {
+                            const elements = document.querySelectorAll(selector);
+                            if (elements.length > 0) {
+                                // 检查是否已经点赞
+                                const isLiked = elements[0].classList.contains('liked') ||
+                                              elements[0].classList.contains('active') ||
+                                              elements[0].getAttribute('aria-pressed') === 'true';
+                                              
+                                if (isLiked) {
+                                    return { success: true, message: "已经为该笔记点赞" };
+                                }
+                                
+                                // 点击点赞按钮
+                                elements[0].click();
+                                return { success: true, message: "点赞成功" };
+                            }
+                        }
+                        
+                        // 尝试根据位置找到可能的点赞按钮
+                        // 通常点赞按钮位于页面底部的操作栏中的第一个位置
+                        const possibleContainers = [
+                            document.querySelector('.operations'),
+                            document.querySelector('.operation-wrapper'),
+                            document.querySelector('.like-comment-collect')
+                        ].filter(el => el !== null);
+                        
+                        if (possibleContainers.length > 0) {
+                            // 通常第一个子元素是点赞按钮
+                            const container = possibleContainers[0];
+                            const firstChild = container.firstElementChild;
+                            if (firstChild) {
+                                firstChild.click();
+                                return { success: true, message: "点赞成功(位置推断)" };
+                            }
+                        }
+                        
+                        return { success: false, message: "未找到点赞按钮" };
+                    }
+                ''')
+                
+                if js_like_result and js_like_result.get('success'):
+                    like_success = True
+                    if js_like_result.get('message') == "已经为该笔记点赞":
+                        return "已经为该笔记点赞"
+            except Exception as e:
+                print(f"尝试点赞方法3失败: {str(e)}")
+        
+        if like_success:
+            return "成功为该笔记点赞"
+        else:
+            return "未能找到点赞按钮，点赞失败"
+    
+    except Exception as e:
+        return f"点赞操作时出错: {str(e)}"
+
+@mcp.tool()
+async def follow_user(url: str) -> str:
+    """关注笔记作者
+    
+    Args:
+        url: 笔记 URL
+    """
+    login_status = await ensure_browser()
+    if not login_status:
+        return "请先登录小红书账号，才能关注用户"
+    
+    try:
+        # 检查是否已经在目标页面
+        if not await is_same_page(url):
+            # 如果不在目标页面，则访问帖子链接
+            # 添加xsec_source=pc_feed参数
+            modified_url = url
+            if '?' in url:
+                modified_url += '&xsec_source=pc_feed'
+            else:
+                modified_url += '?xsec_source=pc_feed'
+            await main_page.goto(modified_url, timeout=60000)
+            await asyncio.sleep(5)  # 等待页面加载
+        else:
+            # 可能需要刷新页面以确保内容最新
+            #await main_page.reload()
+            await asyncio.sleep(3)
+        
+        # 滚动到页面顶部，确保作者信息可见
+        await main_page.evaluate('window.scrollTo(0, 0)')
+        await asyncio.sleep(1)
+        
+        # 获取作者名称
+        author_name = await main_page.evaluate('''
+            () => {
+                const selectors = [
+                    'span.username',
+                    'a.name',
+                    '.author-wrapper .username',
+                    '.info .name'
+                ];
+                
+                for (const selector of selectors) {
+                    const el = document.querySelector(selector);
+                    if (el && el.textContent.trim()) {
+                        return el.textContent.trim();
+                    }
+                }
+                return "未知作者";
+            }
+        ''')
+        
+        # 定位关注按钮并点击
+        follow_success = False
+        
+        # 方法1: 使用精确的选择器查找关注按钮
+        try:
+            follow_result = await main_page.evaluate('''
+                () => {
+                    // 定义可能的关注按钮选择器，按优先级排序
+                    const buttonSelectors = [
+                        // 更精确的选择器
+                        'button.follow:not(.followed)', 
+                        '.info-card button:has-text("关注")',
+                        '.author-info button:has-text("关注")',
+                        '.user-info button:has-text("关注")',
+                        '.creator-info button:has-text("关注")',
+                        // 通用选择器
+                        'button:has-text("关注"):not(:has-text("已关注")):not(:has-text("互相关注"))'
+                    ];
+                    
+                    // 遍历所有选择器，尝试查找关注按钮
+                    for (const selector of buttonSelectors) {
+                        try {
+                            const buttons = document.querySelectorAll(selector);
+                            
+                            // 筛选出真正的关注按钮（排除已关注状态）
+                            const followButtons = Array.from(buttons).filter(btn => {
+                                const text = btn.textContent.trim();
+                                // 精确匹配"关注"，而不是包含"关注"的其他文本
+                                return text === "关注" || text === "+关注" || text === "+ 关注";
+                            });
+                            
+                            // 如果找到了关注按钮，点击第一个
+                            if (followButtons.length > 0) {
+                                const btn = followButtons[0];
+                                const rect = btn.getBoundingClientRect();
+                                
+                                // 确保元素在视口内且可见
+                                if (rect.top >= 0 && rect.left >= 0 && 
+                                    rect.bottom <= window.innerHeight && 
+                                    rect.right <= window.innerWidth &&
+                                    btn.offsetParent !== null) {
+                                    
+                                    // 点击按钮
+                                    btn.click();
+                                    return { 
+                                        success: true, 
+                                        message: "关注成功", 
+                                        button: {
+                                            x: rect.x,
+                                            y: rect.y,
+                                            width: rect.width,
+                                            height: rect.height
+                                        }
+                                    };
+                                } else {
+                                    return { 
+                                        success: false, 
+                                        message: "找到关注按钮但不在视口内或不可见", 
+                                        button: {
+                                            x: rect.x,
+                                            y: rect.y,
+                                            width: rect.width,
+                                            height: rect.height
+                                        }
+                                    };
+                                }
+                            }
+                        } catch (e) {}
+                    }
+                    
+                    // 查找是否已经关注
+                    const alreadyFollowedSelectors = [
+                        'button:has-text("已关注")',
+                        'button:has-text("互相关注")',
+                        '.followed'
+                    ];
+                    
+                    for (const selector of alreadyFollowedSelectors) {
+                        const elements = document.querySelectorAll(selector);
+                        if (elements.length > 0) {
+                            return { success: false, message: "已经关注该用户" };
+                        }
+                    }
+                    
+                    return { success: false, message: "未找到关注按钮" };
+                }
+            ''')
+            
+            # 验证结果
+            if follow_result.get('success'):
+                follow_success = True
+                await asyncio.sleep(2)
+            elif follow_result.get('message') == "已经关注该用户":
+                return "已经关注该用户"
+            elif follow_result.get('button'):
+                # 如果找到按钮但点击失败，尝试使用playwright直接点击坐标
+                button_info = follow_result.get('button')
+                center_x = button_info.get('x') + button_info.get('width') / 2
+                center_y = button_info.get('y') + button_info.get('height') / 2
+                
+                # 使用playwright点击中心坐标
+                await main_page.mouse.click(center_x, center_y)
+                await asyncio.sleep(2)
+                follow_success = True
+        except Exception as e:
+            print(f"尝试关注方法1失败: {str(e)}")
+        
+        # 方法2: 备用方法 - 如果以上都失败，使用作者名片区域定位
+        if not follow_success:
+            try:
+                # 尝试定位到作者名片区域
+                author_card_result = await main_page.evaluate('''
+                    () => {
+                        // 查找作者名片区域
+                        const authorCardSelectors = [
+                            '.author-wrapper',
+                            '.creator-card',
+                            '.user-card',
+                            '.info-card'
+                        ];
+                        
+                        for (const selector of authorCardSelectors) {
+                            const card = document.querySelector(selector);
+                            if (!card) continue;
+                            
+                            // 尝试在卡片内查找"关注"按钮
+                            const buttons = Array.from(card.querySelectorAll('button, a, div.follow-btn'))
+                                .filter(el => {
+                                    const text = el.textContent.trim();
+                                    // 精确匹配"关注"
+                                    return text === "关注" || text === "+关注" || text === "+ 关注";
+                                });
+                                
+                            if (buttons.length > 0) {
+                                // 点击找到的关注按钮
+                                buttons[0].click();
+                                return { success: true };
+                            }
+                        }
+                        
+                        return { success: false };
+                    }
+                ''')
+                
+                if author_card_result.get('success'):
+                    follow_success = True
+                    await asyncio.sleep(2)
+            except Exception as e:
+                print(f"尝试关注方法2失败: {str(e)}")
+        
+        if follow_success:
+            return f"成功关注用户: {author_name}"
+        else:
+            return f"未能找到关注按钮，关注用户 {author_name} 失败"
+    
+    except Exception as e:
+        return f"关注操作时出错: {str(e)}"
+
 if __name__ == "__main__":
     # 初始化并运行服务器
-    print("启动小红书MCP服务器...")
-    print("请在MCP客户端（如Claude for Desktop）中配置此服务器")
+    #print("启动小红书MCP服务器...")
+    #print("请在MCP客户端（如Claude for Desktop）中配置此服务器")
     mcp.run(transport='stdio')

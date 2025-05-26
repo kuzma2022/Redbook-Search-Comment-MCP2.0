@@ -340,7 +340,9 @@ The new version of the Xiaohongshu MCP tool adopts a modular design, divided int
 ## VI. Code Structure
 
 - **xiaohongshu_mcp.py**: The core file implementing the main functions, including login, search, content and comment retrieval, comment publishing, and other code logic.
+- **utils.py**: Utility functions, including URL processing and other common functionality.
 - **requirements.txt**: Records the dependencies required by the project.
+- **tests/**: Test directory containing unit tests for the project.
 
 ## VII. Common Issues and Solutions
 

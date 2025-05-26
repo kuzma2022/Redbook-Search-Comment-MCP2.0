@@ -6,6 +6,7 @@ import pandas as pd
 from datetime import datetime
 from playwright.async_api import async_playwright
 from fastmcp import FastMCP
+from utils import clean_url, is_same_url, convert_url_format
 
 # 初始化 FastMCP 服务器
 mcp = FastMCP("xiaohongshu_scraper")
@@ -251,8 +252,8 @@ async def search_notes(keywords: str, limit: int = 5, sort_by_time: bool = False
             if sort_by_time:
                 result = "按最新时间排序的搜索结果：\n\n"
             for i, post in enumerate(unique_posts, 1):
-                # 将search_result替换为explore
-                display_url = post['url'].replace('/search_result/', '/explore/')
+                # 将URL转换为explore格式
+                display_url = convert_url_format(post['url'], 'explore')
                 result += f"{i}. {post['title']}\n   链接: {display_url}\n\n"
             
             return result
@@ -281,25 +282,8 @@ async def is_same_page(target_url: str) -> bool:
         # 获取当前URL
         current_url = main_page.url
         
-        # 移除URL中的查询参数和令牌进行比较
-        def clean_url(url):
-            # 首先提取基本URL（不包含查询参数）
-            base_url = url.split('?')[0]
-            # 如果是小红书搜索结果或笔记页面，保留关键ID
-            if '/search_result/' in url or '/explore/' in url or '/discovery/' in url:
-                # 提取ID
-                import re
-                id_match = re.search(r'/(search_result|explore|discovery)/([a-zA-Z0-9]+)', url)
-                if id_match:
-                    return f"{base_url}_{id_match.group(2)}"
-            return base_url
-        
-        # 清理URL
-        clean_current = clean_url(current_url)
-        clean_target = clean_url(target_url)
-        
-        # 如果清理后的URL相同，则认为是同一页面
-        return clean_current == clean_target
+        # 使用工具函数比较URL
+        return is_same_url(current_url, target_url)
     except Exception as e:
         print(f"检查URL时出错: {str(e)}")
         return False
